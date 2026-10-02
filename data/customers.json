@@ -1,0 +1,203 @@
+[
+  {
+    "customer_id": "CUS_001",
+    "name": "Aarav Sharma",
+    "phone": "+919800000001",
+    "preferred_language": "hi-IN",
+    "merchant": "FitPulse Gym",
+    "plan": "Monthly Membership",
+    "mandate_type": "UPI Autopay",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO001",
+      "amount_inr": 1499,
+      "due_date": "2026-10-01",
+      "status": "failed",
+      "failure_code": "INSUFFICIENT_FUNDS",
+      "failure_reason": "Insufficient funds in the linked bank account",
+      "attempts": 1
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_002",
+    "name": "Priya Nair",
+    "phone": "+919800000002",
+    "preferred_language": "en-IN",
+    "merchant": "StreamBox OTT",
+    "plan": "Premium Annual",
+    "mandate_type": "Card e-Mandate",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO002",
+      "amount_inr": 2999,
+      "due_date": "2026-09-30",
+      "status": "failed",
+      "failure_code": "CARD_EXPIRED",
+      "failure_reason": "The card linked to the mandate has expired",
+      "attempts": 1
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_003",
+    "name": "Rohit Verma",
+    "phone": "+919800000003",
+    "preferred_language": "hi-IN",
+    "merchant": "QuickLearn Academy",
+    "plan": "EMI 3 of 6",
+    "mandate_type": "eNACH",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO003",
+      "amount_inr": 4500,
+      "due_date": "2026-10-01",
+      "status": "failed",
+      "failure_code": "BANK_TECHNICAL_ERROR",
+      "failure_reason": "Temporary technical error at the customer's bank",
+      "attempts": 1
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_004",
+    "name": "Sneha Iyer",
+    "phone": "+919800000004",
+    "preferred_language": "ta-IN",
+    "merchant": "GreenLeaf Insurance",
+    "plan": "Health Policy Monthly Premium",
+    "mandate_type": "UPI Autopay",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO004",
+      "amount_inr": 899,
+      "due_date": "2026-09-28",
+      "status": "recovered",
+      "failure_code": "INSUFFICIENT_FUNDS",
+      "failure_reason": "Insufficient funds in the linked bank account",
+      "attempts": 2
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_005",
+    "name": "Vikram Singh",
+    "phone": "+919800000005",
+    "preferred_language": "hi-IN",
+    "merchant": "CloudDesk SaaS",
+    "plan": "Team Plan Monthly",
+    "mandate_type": "Card e-Mandate",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO005",
+      "amount_inr": 5999,
+      "due_date": "2026-10-01",
+      "status": "failed",
+      "failure_code": "AMOUNT_EXCEEDS_LIMIT",
+      "failure_reason": "Charge exceeded the maximum amount allowed on the mandate",
+      "attempts": 1
+    },
+    "disputed": true,
+    "dispute_note": "Customer emailed support saying they were charged for 10 seats instead of 5"
+  },
+  {
+    "customer_id": "CUS_006",
+    "name": "Ananya Reddy",
+    "phone": "+919800000006",
+    "preferred_language": "te-IN",
+    "merchant": "FreshBasket",
+    "plan": "Weekly Grocery Subscription",
+    "mandate_type": "UPI Autopay",
+    "mandate_status": "revoked",
+    "payment": {
+      "payment_id": "pay_DEMO006",
+      "amount_inr": 749,
+      "due_date": "2026-09-29",
+      "status": "failed",
+      "failure_code": "MANDATE_REVOKED",
+      "failure_reason": "The UPI Autopay mandate was revoked from the customer's UPI app",
+      "attempts": 1
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_007",
+    "name": "Karan Mehta",
+    "phone": "+919800000007",
+    "preferred_language": "en-IN",
+    "merchant": "DriveSafe Motors",
+    "plan": "Car Loan EMI 14 of 36",
+    "mandate_type": "eNACH",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO007",
+      "amount_inr": 18250,
+      "due_date": "2026-10-02",
+      "status": "failed",
+      "failure_code": "INSUFFICIENT_FUNDS",
+      "failure_reason": "Insufficient funds in the linked bank account",
+      "attempts": 2
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_008",
+    "name": "Fatima Khan",
+    "phone": "+919800000008",
+    "preferred_language": "hi-IN",
+    "merchant": "BrightSmile Dental",
+    "plan": "Treatment EMI 2 of 4",
+    "mandate_type": "Card e-Mandate",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO008",
+      "amount_inr": 3200,
+      "due_date": "2026-09-30",
+      "status": "failed",
+      "failure_code": "AFA_NOT_COMPLETED",
+      "failure_reason": "Pre-debit authentication was not completed by the customer",
+      "attempts": 1
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_009",
+    "name": "Arjun Das",
+    "phone": "+919800000009",
+    "preferred_language": "bn-IN",
+    "merchant": "BookNook",
+    "plan": "Reader Club Quarterly",
+    "mandate_type": "UPI Autopay",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO009",
+      "amount_inr": 599,
+      "due_date": "2026-10-01",
+      "status": "failed",
+      "failure_code": "INSUFFICIENT_FUNDS",
+      "failure_reason": "Insufficient funds in the linked bank account",
+      "attempts": 3
+    },
+    "disputed": false
+  },
+  {
+    "customer_id": "CUS_010",
+    "name": "Meera Joshi",
+    "phone": "+919800000010",
+    "preferred_language": "mr-IN",
+    "merchant": "SkillUp Online",
+    "plan": "Pro Course EMI 5 of 12",
+    "mandate_type": "eNACH",
+    "mandate_status": "active",
+    "payment": {
+      "payment_id": "pay_DEMO010",
+      "amount_inr": 2499,
+      "due_date": "2026-10-01",
+      "status": "failed",
+      "failure_code": "ACCOUNT_FROZEN",
+      "failure_reason": "The linked bank account is frozen or inactive",
+      "attempts": 1
+    },
+    "disputed": false
+  }
+]

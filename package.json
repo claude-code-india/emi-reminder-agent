@@ -1,0 +1,23 @@
+{
+  "name": "razorpay-autopay-recovery-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sarvam voice agent + mock Customer/Payment API that recovers failed autopay payments for 10 fictional customers.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch backend/server.ts",
+    "start": "tsx backend/server.ts",
+    "demo": "tsx demo/run-demo.ts",
+    "eval": "tsx evaluation/run-eval.ts",
+    "test": "tsx evaluation/run-eval.ts --check",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
