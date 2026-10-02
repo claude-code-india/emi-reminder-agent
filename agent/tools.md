@@ -31,8 +31,9 @@ These are the tools/actions exposed to the Sarvam voice agent. Each maps 1:1 to 
 | `schedule_callback` | POST | `/api/callbacks` |
 | `escalate_to_human` | POST | `/api/escalations` |
 | `log_outcome` | POST | `/api/outcomes` |
+| `lookup_failure_code` *(optional)* | GET | `/api/failure-codes/{code}` |
 
-Not exposed to the agent (operator/dev only): `GET /api/customers`, `GET /api/outcomes` (audit log), `POST /api/reset`.
+Not exposed to the agent (operator/dev only): `GET /api/customers`, `GET /api/failure-codes` (full catalogue), `GET /api/outcomes` (audit log), `POST /api/reset`, and `POST /webhooks/razorpay` (Razorpay → backend, not a tool).
 
 > Example responses below show the fields named in the contract. Exact extra fields may vary; the agent should rely only on the fields listed.
 
@@ -106,35 +107,48 @@ x-api-key: <TOOL_API_KEY>
 ```json
 {
   "customer_id": "CUS_001",
+  "name": "Aarav Sharma",
   "merchant": "FitPulse Gym",
   "plan": "Monthly Membership",
   "mandate_type": "UPI Autopay",
-  "payment": {
-    "payment_id": "pay_DEMO001",
-    "amount_inr": 1499,
-    "due_date": "2026-10-01",
-    "status": "failed",
-    "failure_code": "INSUFFICIENT_FUNDS",
-    "failure_reason": "Insufficient funds in the linked bank account",
-    "attempts": 1
-  },
+  "mandate_status": "active",
+  "payment_id": "pay_DEMO001",
+  "amount_inr": 1499,
+  "due_date": "2026-10-01",
+  "status": "failed",
+  "failure_code": "INSUFFICIENT_FUNDS",
+  "failure_reason": "Insufficient funds in the linked bank account",
+  "attempts": 1,
   "disputed": false,
+  "failure_info": {
+    "action": "retry",
+    "explain_en": "there wasn't enough balance in the linked account on the debit date",
+    "explain_hi": "debit ki tareekh par linked account mein balance kam tha",
+    "customer_fix": "Add funds, then allow a retry."
+  },
   "recovery_options": {
     "can_retry": true,
     "retry_block_reason": null,
     "can_send_payment_link": true,
-    "recommended_action": "retry_payment"
+    "recommended_action": "offer_retry"
   }
 }
 ```
+Payment fields are top-level (not nested under `payment`).
 
 **How to read it**
-- `payment.status == "recovered"` → thank, `log_outcome(already_paid)`. Never retry.
-- `payment.status == "retry_initiated"` → a retry is already in progress; reassure, don't retry again.
-- `disputed == true` → `escalate_to_human(reason: dispute)`.
-- `recovery_options.can_retry == true` → ask consent → `retry_payment`.
-- `can_retry == false` → use `retry_block_reason` to explain, offer `send_payment_link` if `can_send_payment_link`.
-- Retryable codes: `INSUFFICIENT_FUNDS`, `BANK_TECHNICAL_ERROR`, `AFA_NOT_COMPLETED`. Not retryable: `CARD_EXPIRED`, `MANDATE_REVOKED`, `ACCOUNT_FROZEN`, `AMOUNT_EXCEEDS_LIMIT`. `attempts >= 3` → not retryable.
+- Explain the failure with `failure_info.explain_en` / `explain_hi` (rephrased naturally). `customer_fix` is guidance for the agent, not a script.
+- `failure_info.action` is one of `retry` | `retry_later` | `payment_link` | `escalate` (from the 27-code catalogue — see `docs/api-contract.md`). Unknown codes resolve to `UNKNOWN_ERROR` → `escalate`.
+- `recovery_options.recommended_action` combines the failure action with status, dispute and attempts:
+
+| recommended_action | When | Agent does |
+|---|---|---|
+| `thank_customer_no_action` | `status == "recovered"` | Thank → `log_outcome(already_paid)`. Never retry. |
+| `confirm_retry_in_progress` | `status == "retry_initiated"` | Reassure; don't retry again. |
+| `escalate_to_human` | `disputed == true` or `failure_info.action == "escalate"` | No retry, no link. `escalate_to_human` (`dispute`, `fraud_suspected` or `other`). |
+| `offer_retry` | `can_retry == true` (action `retry`, attempts < 3) | Ask explicit consent → `retry_payment`. |
+| `offer_callback_or_payment_link` | action `retry_later` (e.g. daily/card limit) | Don't retry now. Offer `schedule_callback` or `send_payment_link`. |
+| `offer_payment_link` | action `payment_link`, or attempts ≥ 3 | Offer `send_payment_link`. |
 
 **Errors**
 | Status | Meaning | Agent says |
@@ -174,9 +188,11 @@ Content-Type: application/json
 ```json
 {
   "status": "retry_initiated",
-  "retry_id": "rty_xxxxxxxx",
+  "retry_id": "rty_xxxxxxxxxx",
+  "payment_id": "pay_DEMO001",
   "amount_inr": 1499,
-  "message": "Mandate retry initiated"
+  "attempt": 2,
+  "message": "Retry of ₹1,499 initiated on the UPI Autopay mandate. ..."
 }
 ```
 Agent: "I've started the retry for fourteen ninety-nine rupees. You'll get a confirmation SMS shortly." → `log_outcome(payment_recovery_initiated)`.
@@ -188,7 +204,9 @@ Agent: "I've started the retry for fourteen ninety-nine rupees. You'll get a con
 | 409 `ALREADY_RECOVERED` | already paid | "Good news, this payment is already received. Thank you!" → `log_outcome(already_paid)`. |
 | 409 `DISPUTED_ESCALATE` | open dispute | "I see there's an open concern on this charge, so I'll pass this to our team rather than charge you." → `escalate_to_human(dispute)`. |
 | 409 `MAX_ATTEMPTS_REACHED` | ≥ 3 attempts | "The autopay can't be retried again, but I can send you a secure payment link. SMS or WhatsApp?" → `send_payment_link`. |
-| 409 `NOT_RETRYABLE` | card expired / mandate revoked / account frozen / over limit | Explain the reason simply, offer `send_payment_link`. |
+| 409 `NOT_RETRYABLE` | `failure_info.action == "payment_link"` (card expired, mandate revoked, account frozen, over limit, …) | Explain the reason simply, offer `send_payment_link`. |
+| 409 `RETRY_LATER` | `failure_info.action == "retry_later"` (daily / card limit) | "Retrying right now would fail again. I can call you back once the limit resets, or send a payment link. Which do you prefer?" → `schedule_callback` or `send_payment_link`. |
+| 409 `ESCALATION_REQUIRED` | `failure_info.action == "escalate"` (RISK_DECLINED, CARD_REPORTED_LOST_OR_STOLEN, PAYMENT_STOPPED_BY_CUSTOMER, UNKNOWN_ERROR) | Don't collect. "A specialist from our team needs to look at this." → `escalate_to_human`. |
 | 409 `RETRY_IN_PROGRESS` | retry already started | "A retry is already in progress, so you don't need to do anything. You'll get an SMS once it's done." Do not retry. |
 | 400 `SENSITIVE_DATA_REJECTED` | body had otp/cvv/pin/etc. | Never send such fields. Warn customer: "Please never share your OTP, PIN or CVV with anyone, including me." Re-call with only `customer_consent`. |
 
@@ -196,7 +214,7 @@ Agent: "I've started the retry for fourteen ninety-nine rupees. You'll get a con
 
 ## 4. `send_payment_link`
 
-**When to use:** retry is not possible (non-retryable code, max attempts, revoked mandate) or the customer prefers to pay manually. Ask SMS or WhatsApp first.
+**When to use:** `recommended_action` is `offer_payment_link` or `offer_callback_or_payment_link`, or the customer prefers to pay manually. Only if `can_send_payment_link` is true — never for escalate-only failures or disputes. Ask SMS or WhatsApp first.
 
 **HTTP:** `POST {{BASE_URL}}/api/payments/{customer_id}/payment-link`
 
@@ -224,19 +242,22 @@ Content-Type: application/json
 ```
 ```json
 {
-  "link_id": "plink_xxxxxxxx",
-  "short_url": "https://rzp.io/i/xxxxxx",
-  "expires_at": "2026-10-09T18:29:59+05:30"
+  "link_id": "plink_xxxxxxxxxx",
+  "channel": "whatsapp",
+  "short_url": "https://rzp.io/demo/xxxxxxxxxx",
+  "amount_inr": 2999,
+  "expires_at": "2026-10-04T12:00:00.000Z"
 }
 ```
-Agent: "I've sent a secure payment link on WhatsApp to your registered number. It's valid till ninth October." Never read `short_url` aloud. → `log_outcome(payment_link_sent)`.
+Agent: "I've sent a secure payment link on WhatsApp to your registered number. It's valid for the next two days." Never read `short_url` aloud. → `log_outcome(payment_link_sent)`.
 
 **Errors**
 | Status / code | Meaning | Agent says / does |
 |---|---|---|
 | 409 `ALREADY_RECOVERED` | already paid | Thank them → `log_outcome(already_paid)`. |
 | 409 `DISPUTED_ESCALATE` | open dispute | → `escalate_to_human(dispute)`. |
-| 400 (invalid channel) | channel not sms/whatsapp | Ask again: "Should I send it on SMS or WhatsApp?" |
+| 409 `ESCALATION_REQUIRED` | escalate-only failure code | Don't send a link or ask for payment → `escalate_to_human` (`fraud_suspected` or `other`). |
+| 400 `INVALID_CHANNEL` | channel not sms/whatsapp | Ask again: "Should I send it on SMS or WhatsApp?" |
 | 400 `SENSITIVE_DATA_REJECTED` | sensitive key in body | Remove it, warn customer never to share such data. |
 
 ---
@@ -284,7 +305,7 @@ Agent: "Done. I'll call you on fifth October at eleven in the morning." → `log
 
 ## 6. `escalate_to_human`
 
-**When to use:** customer asks for a person; disputes the charge; suspects fraud/unauthorised debit; mentions hardship (job loss, medical, can't pay); account frozen with distress; asks for waivers/extensions; or any tool error you can't resolve.
+**When to use:** `recommended_action` is `escalate_to_human` (dispute or escalate-only failure code), or the customer asks for a person; disputes the charge; suspects fraud/unauthorised debit; mentions hardship (job loss, medical, can't pay); account frozen with distress; asks for waivers/extensions; or any tool error you can't resolve.
 
 **HTTP:** `POST {{BASE_URL}}/api/escalations`
 
@@ -367,6 +388,42 @@ No need to say anything about this to the customer.
 
 ---
 
+## 8. `lookup_failure_code` *(optional)*
+
+**When to use:** rarely. `get_payment_status` already includes `failure_info`, so this is only needed if the agent has a bare `failure_code` (e.g. from injected call context) and wants the explanation and allowed action. Safe to leave unconfigured.
+
+**HTTP:** `GET {{BASE_URL}}/api/failure-codes/{code}`
+
+**Parameters schema**
+```json
+{
+  "type": "object",
+  "properties": {
+    "code": { "type": "string", "description": "Failure code, e.g. DAILY_LIMIT_EXCEEDED (path parameter, case-insensitive)" }
+  },
+  "required": ["code"]
+}
+```
+
+**Example**
+```http
+GET /api/failure-codes/DAILY_LIMIT_EXCEEDED
+x-api-key: <TOOL_API_KEY>
+```
+```json
+{
+  "code": "DAILY_LIMIT_EXCEEDED",
+  "applies_to": ["UPI Autopay", "eNACH"],
+  "action": "retry_later",
+  "explain_en": "your bank's daily transaction limit was already used up that day",
+  "explain_hi": "us din aapke bank ki daily transaction limit poori ho chuki thi",
+  "customer_fix": "Retry the next day, or pay now with a payment link."
+}
+```
+Unknown codes never 404: they return the `UNKNOWN_ERROR` entry (`action: "escalate"`). This is reference data only — what the agent may actually do still comes from `get_payment_status.recovery_options`.
+
+---
+
 ## Generic errors (all tools)
 
 | Situation | Agent says / does |
@@ -392,5 +449,5 @@ Exact screen and field names in the Sarvam dashboard may differ; follow the equi
    - Headers: `x-api-key: <TOOL_API_KEY>`, `Content-Type: application/json`.
    - Parameters: paste the JSON schema; map `customer_id` to the URL path and the rest to the JSON body.
 6. **Set languages**: enable Hindi, English, Tamil, Telugu, Bengali and Marathi (hi-IN, en-IN, ta-IN, te-IN, bn-IN, mr-IN) for speech-to-text and text-to-speech, and choose a female voice to match the persona.
-7. **Test call**: call with `customer_id = CUS_001` (retry path), `CUS_002` (payment link), `CUS_004` (already paid), `CUS_005` (dispute → escalate). After each call, check `GET /api/outcomes` for the tool actions and logged outcome. Use `POST /api/reset` between test runs.
+7. **Test call**: call with `customer_id = CUS_001` (retry path), `CUS_002` (payment link), `CUS_004` (already paid), `CUS_005` (dispute → escalate). Optionally add `lookup_failure_code` (section 8). After each call, check `GET /api/outcomes` for the tool actions and logged outcome. Use `POST /api/reset` between test runs.
 8. **Update URLs** whenever the ngrok URL changes.

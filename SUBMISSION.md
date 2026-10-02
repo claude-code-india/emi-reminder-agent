@@ -19,15 +19,19 @@ A multilingual Sarvam voice agent that calls customers whose autopay (UPI Autopa
 ## What I built
 
 - A Sarvam voice agent (system prompt + tool definitions) that understands the failure, explains it, offers recovery, retries, schedules callbacks or escalates to a human
-- A mock Customer/Payment API in TypeScript (Node, no framework) exposing 9 tool endpoints plus an audit log
+- A mock Customer/Payment API in TypeScript (Node, no framework) exposing the agent's tool endpoints plus an audit log
+- A 27-code failure catalogue across UPI Autopay, eNACH and card e-mandates. Each code maps to one action (retry, retry later, payment link or escalate) plus a short English/Hindi explanation the agent uses on the call
+- Razorpay webhook ingestion (`POST /webhooks/razorpay`, HMAC-SHA256 signature check): `payment.failed` marks a payment failed with a mapped failure code, `payment.captured` marks it recovered
+- A batch dialer (`npm run dial`, with `--dry-run`) that triggers Sarvam outbound calls for every customer still needing recovery, only between 8 AM and 7 PM IST
+- Docker setup (`docker compose up`) and GitHub Actions CI (typecheck + tests on every push)
 - 10 fictional customers in 6 languages covering insufficient funds, expired card, bank error, already recovered, dispute, revoked mandate, max attempts, pending authentication and frozen account
-- Server-side guardrails: consent check, duplicate/recovered/disputed/max-attempt blocks, sensitive-data rejection, masked phone numbers, optional API-key auth
+- Server-side guardrails: consent check, duplicate/recovered/disputed/max-attempt blocks, retry-later and escalate-only blocks (`RETRY_LATER`, `ESCALATION_REQUIRED`), sensitive-data rejection, masked phone numbers, optional API-key auth
 - A scripted demo (`npm run demo`) that prints every tool call for CUS_001
 - An evaluation suite (`npm run eval` / `npm test`) that regenerates `evaluation/results.md`
 
 ## Tech stack
 
-Sarvam AI voice agent · TypeScript · Node.js 18+ · tsx · ngrok (to expose tools) · JSON fixture data
+Sarvam AI voice agent · TypeScript · Node.js 18+ · tsx · ngrok (to expose tools) · JSON fixture data · Docker · GitHub Actions
 
 ## How to test (3 commands)
 
@@ -56,7 +60,7 @@ Outcome: Payment recovery initiated
 
 - **Defence in depth.** Every safety rule is in the prompt and is also enforced by the API, so a model mistake cannot cause an unsafe debit.
 - **Consent before debit.** Retry requires `customer_consent: true`, otherwise `CONSENT_REQUIRED`.
-- **Failure-aware routing.** Retryable codes (insufficient funds, bank error, pending authentication) get a retry. Non-retryable ones (expired card, revoked mandate, frozen account, amount over limit) get a payment link.
+- **Failure-aware routing.** Each of 27 failure codes has one action. Retryable codes (insufficient funds, bank errors, pending authentication) get a retry. Limit codes get a callback or link instead of an immediate retry. Broken-mandate codes (expired card, revoked mandate, frozen account, amount over limit) get a payment link. Risk declines, lost/stolen cards, stop-payments and unknown errors go only to a human, with no retry and no link.
 - **No double charging.** Already-recovered and in-flight retries are blocked. Retries stop at 3 attempts.
 - **Humans for hard cases.** Disputes, fraud, hardship and explicit requests go to a human ticket with a priority and SLA.
 - **No credentials on calls.** OTP/PIN/CVV/card number/password are never requested. Any request containing them is rejected and nothing is logged.
@@ -69,8 +73,8 @@ Outcome: Payment recovery initiated
 ## What I'd do next
 
 - Replace the mock with the Razorpay Subscriptions / Payments and Payment Links APIs
-- Trigger calls from `payment.failed` webhooks and confirm recovery via `payment.captured`
-- Add DND/NCPR checks, call-recording consent, calling-hour windows and contact caps
+- Test the webhook and outbound dialer against live Razorpay and Sarvam accounts
+- Add DND/NCPR checks, call-recording consent and contact caps
 - Persist state in a database and add recovery-rate / handoff-rate dashboards
 
 ---

@@ -8,18 +8,22 @@ A Sarvam voice agent that calls customers whose autopay payment failed, explains
 
 > Build a voice agent that contacts customers whose autopay payment failed and attempts to recover the payment.
 
-Autopay (UPI Autopay, eNACH, card e-mandates) fails for many reasons: insufficient funds, expired cards, revoked mandates, bank errors, incomplete pre-debit authentication. Each failure needs a different recovery path, and some (disputes, hardship, frozen accounts) need a human rather than a retry. The agent has to pick the right path, get explicit consent before any debit, and never handle sensitive credentials like OTPs or PINs.
+Autopay (UPI Autopay, eNACH, card e-mandates) fails for many reasons: insufficient funds, daily limits, expired cards, revoked mandates, bank errors, incomplete pre-debit authentication, risk declines. Each failure needs a different recovery path, and some (disputes, hardship, lost/stolen cards, risk declines) need a human rather than a retry. The backend classifies 27 failure codes into four actions (see [Failure codes covered](#7-failure-codes-covered)). The agent has to pick the right path, get explicit consent before any debit, and never handle sensitive credentials like OTPs or PINs.
 
 ## 2. Architecture
 
 ![Architecture](architecture.png)
 
 ```
-10 Fictional Customers
-        │
+Razorpay payment.failed / payment.captured
+        │   POST /webhooks/razorpay  (HMAC-SHA256 signature verified)
         ▼
 Customer/Payment API  (backend/server.ts — mock, in-memory, guardrails enforced server-side)
-        │   tools: get customer, get payment, retry, payment link, callback, escalate, log outcome
+        │   10 fictional customers · 27-code failure catalogue (backend/failure-codes.ts)
+        │   tools: get customer, get payment (+ failure_info), retry, payment link,
+        │          callback, escalate, log outcome, lookup failure code
+        │
+        │   npm run dial → scripts/dial-all.ts → backend/sarvam.ts  (outbound calls, 8 AM–7 PM IST only)
         ▼
 Sarvam Voice Agent  (agent/system-prompt.md + agent/tools.md, multilingual: hi / en / ta / te / bn / mr)
         │
@@ -49,7 +53,12 @@ emi-reminder-agent/
 ├── backend/
 │   ├── server.ts               # HTTP server, routes, auth, sensitive-data filter
 │   ├── customers.ts            # customer store (loads data/customers.json)
-│   └── payments.ts             # retry / payment link / callback / escalation / outcome logic
+│   ├── payments.ts             # retry / payment link / callback / escalation / outcome logic
+│   ├── failure-codes.ts        # 27-code failure catalogue + Razorpay error mapping
+│   ├── webhooks.ts             # POST /webhooks/razorpay (signature check, payment.failed / captured)
+│   └── sarvam.ts               # outbound call trigger client
+├── scripts/
+│   └── dial-all.ts             # batch dialer (npm run dial, --dry-run)
 ├── demo/
 │   ├── demo-transcript.md      # CUS_001 transcript + tool calls + final outcome
 │   ├── demo-screenshots/       # Sarvam config + test call screenshots
@@ -61,6 +70,11 @@ emi-reminder-agent/
 │   └── run-eval.ts             # npm run eval / npm test
 ├── docs/
 │   └── api-contract.md         # API contract used as Sarvam tools
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # typecheck + tests on push
+├── Dockerfile
+├── docker-compose.yml
 ├── .env.example
 └── .gitignore
 ```
@@ -102,6 +116,19 @@ Other scripts:
 | `npm run eval` | Runs all evaluation scenarios against the API and regenerates `evaluation/results.md` |
 | `npm test` | Same scenarios; exits non-zero if any check fails (CI-friendly) |
 | `npm run typecheck` | TypeScript type check (`tsc --noEmit`) |
+| `npm run dial` | Batch-dials every customer still needing recovery via Sarvam, only within 8 AM–7 PM IST. `npm run dial -- --dry-run` prints the plan without calling |
+| `docker compose up` | Builds and runs the API in a container on port 3000 (reads `.env`) |
+
+CI (`.github/workflows/ci.yml`) runs the typecheck and tests on every push.
+
+### Razorpay webhook
+
+`POST /webhooks/razorpay` accepts Razorpay events. It verifies the `X-Razorpay-Signature` header (HMAC-SHA256 of the raw body with your webhook secret), then:
+
+- `payment.failed` → marks the customer's payment failed, mapping Razorpay's error to a catalogue code (`fromRazorpayError`; unmatched → `UNKNOWN_ERROR`).
+- `payment.captured` → marks the payment recovered, so the agent won't retry it.
+
+The webhook secret, Sarvam agent ID and call API URL are set via env vars; see `.env.example` for the exact names. In this repo the webhook updates the in-memory mock store; it has not been tested against a live Razorpay account.
 
 ### Connect to Sarvam
 
@@ -143,7 +170,60 @@ All 10 customers in `data/customers.json` are fictional. Phone numbers are dummy
 | CUS_009 | Arjun Das | bn-IN | BookNook | ₹599 | INSUFFICIENT_FUNDS (3 attempts) | max attempts → link |
 | CUS_010 | Meera Joshi | mr-IN | SkillUp Online | ₹2,499 | ACCOUNT_FROZEN | human / hardship |
 
-## 7. Guardrails and safety
+## 7. Failure codes covered
+
+`backend/failure-codes.ts` defines 27 normalised codes. Each code's `action` decides what the agent may offer; `GET /api/customers/:id/payment` returns it as `failure_info` along with a one-line explanation in English and Hindi. Unknown codes are treated as `UNKNOWN_ERROR` (escalate, never guess). Full catalogue: `GET /api/failure-codes`. "All" = UPI Autopay, eNACH and card e-mandate.
+
+**Retry** (with explicit consent)
+
+| Code | Applies to |
+|---|---|
+| INSUFFICIENT_FUNDS | All |
+| AFA_NOT_COMPLETED | Card |
+| PRE_DEBIT_NOTIFICATION_FAILED | UPI Autopay |
+| ISSUER_DECLINED | Card |
+| BANK_TECHNICAL_ERROR | All |
+| BANK_TIMEOUT | All |
+| UPI_APP_ERROR | UPI Autopay |
+| GATEWAY_ERROR | All |
+
+**Retry later** (no retry now; offer a callback or payment link)
+
+| Code | Applies to |
+|---|---|
+| DAILY_LIMIT_EXCEEDED | UPI Autopay, eNACH |
+| CARD_LIMIT_EXCEEDED | Card |
+
+**Payment link** (mandate can't succeed as-is)
+
+| Code | Applies to |
+|---|---|
+| AMOUNT_EXCEEDS_LIMIT | All |
+| MANDATE_REVOKED | All |
+| MANDATE_PAUSED | UPI Autopay |
+| MANDATE_EXPIRED | All |
+| MANDATE_NOT_ACTIVE | eNACH |
+| ACCOUNT_FROZEN | UPI Autopay, eNACH |
+| ACCOUNT_CLOSED | UPI Autopay, eNACH |
+| ACCOUNT_DORMANT | UPI Autopay, eNACH |
+| ACCOUNT_DETAILS_MISMATCH | eNACH |
+| INVALID_VPA | UPI Autopay |
+| CARD_EXPIRED | Card |
+| CARD_BLOCKED | Card |
+| INTERNATIONAL_NOT_ENABLED | Card |
+
+**Escalate** (don't collect on the call; no retry, no link)
+
+| Code | Applies to |
+|---|---|
+| PAYMENT_STOPPED_BY_CUSTOMER | eNACH |
+| CARD_REPORTED_LOST_OR_STOLEN | Card |
+| RISK_DECLINED | All |
+| UNKNOWN_ERROR | All |
+
+The 10 demo customers use 7 of these codes; the rest are exercised through the catalogue endpoints and the webhook mapping. The code names are internal; the Razorpay-error mapping is keyword-based and best-effort.
+
+## 8. Guardrails and safety
 
 The rules live in two places: the system prompt tells the agent what to do, and the backend refuses unsafe actions even if the agent gets it wrong.
 
@@ -154,7 +234,10 @@ The rules live in two places: the system prompt tells the agent what to do, and 
 | Never retry a duplicate while one is in flight (`409 RETRY_IN_PROGRESS`) | Backend |
 | Disputed charges go to a human, not a retry (`409 DISPUTED_ESCALATE`) | Backend + prompt |
 | Stop after 3 attempts and offer a payment link (`409 MAX_ATTEMPTS_REACHED`) | Backend |
-| Non-retryable failures (CARD_EXPIRED, MANDATE_REVOKED, ACCOUNT_FROZEN, AMOUNT_EXCEEDS_LIMIT) get a payment link (`409 NOT_RETRYABLE`) | Backend |
+| Only `retry` failure codes can be retried. `payment_link` codes → `409 NOT_RETRYABLE`; `retry_later` codes → `409 RETRY_LATER` (callback or link) | Backend + prompt |
+| Escalate-only codes (RISK_DECLINED, CARD_REPORTED_LOST_OR_STOLEN, PAYMENT_STOPPED_BY_CUSTOMER, UNKNOWN_ERROR): no retry and no payment link (`409 ESCALATION_REQUIRED`) | Backend + prompt |
+| Razorpay webhooks rejected unless the HMAC-SHA256 signature verifies | Backend |
+| Batch dialer only places calls 8 AM–7 PM IST | Dialer + prompt |
 | Never ask for, accept or store an OTP, CVV, PIN, UPI PIN, card number or password. Any such field is rejected with `400 SENSITIVE_DATA_REJECTED` and never logged | Backend + prompt |
 | Respect a "no": log `customer_declined` and end politely, no pressure tactics | Prompt |
 | Human handoff on request, dispute, suspected fraud or hardship | Prompt + `/api/escalations` |
@@ -162,7 +245,7 @@ The rules live in two places: the system prompt tells the agent what to do, and 
 | Optional shared-secret auth (`x-api-key`) on all tool calls | Backend |
 | Every tool action and outcome lands in an audit log (`GET /api/outcomes`) | Backend |
 
-## 8. Evaluation
+## 9. Evaluation
 
 Scenario checks run with `npm run eval` (or `npm test`). "API-verified" means the expected behaviour is enforced and checked against the backend. Results from live Sarvam test calls are recorded separately in [evaluation/results.md](evaluation/results.md); this README does not claim live-call passes.
 
@@ -178,13 +261,15 @@ Scenario checks run with `npm run eval` (or `npm test`). "API-verified" means th
 | Non-retryable failure | Send a payment link | ✅ API-verified (`NOT_RETRYABLE` → link) |
 | Max attempts reached | No retry | ✅ API-verified (`MAX_ATTEMPTS_REACHED`) |
 | Customer is busy | Schedule a callback | ✅ API-verified |
+| Retry-later failure (e.g. DAILY_LIMIT_EXCEEDED) | No retry now; offer callback or payment link | Enforced by backend (`409 RETRY_LATER`); no demo customer uses this code, see [evaluation/results.md](evaluation/results.md) for test status |
+| Escalate-only failure (e.g. RISK_DECLINED) | No retry, no link; escalate | Enforced by backend (`409 ESCALATION_REQUIRED` on retry and link); no demo customer uses this code, see [evaluation/results.md](evaluation/results.md) for test status |
 
 Conversational behaviour (tone, language, explanation quality, respecting a refusal) can only be judged on live calls. Those results are in `evaluation/results.md`.
 
-## 9. Limitations and next steps
+## 10. Limitations and next steps
 
 - **Mock payments.** The backend is an in-memory mock. Nothing calls the real Razorpay API, and retries and payment links are simulated.
-- **Real integration.** Next step: wire the tools to the Razorpay Subscriptions / Payments APIs (mandate retry, Payment Links) and listen for `payment.failed` webhooks to trigger calls automatically, then use `payment.captured` / `subscription.charged` to confirm recovery.
-- **Compliance.** Add DND / NCPR checks, recorded call consent, calling-hour windows and per-customer contact frequency caps before dialling real customers.
+- **Real integration.** The webhook endpoint ingests `payment.failed` / `payment.captured`, but only updates the mock store, and retries and links are still simulated. Next step: wire the tools to the Razorpay Subscriptions / Payments APIs (mandate retry, Payment Links), handle `subscription.charged`, and test the webhook and outbound dialer against live accounts.
+- **Compliance.** The dialer enforces the 8 AM–7 PM IST window. Still needed before dialling real customers: DND / NCPR checks, recorded call consent and per-customer contact frequency caps.
 - **Persistence.** State resets on restart. A real deployment needs a database for customers, attempts, callbacks, escalation tickets and the audit log.
 - **Observability.** Add call-level metrics (recovery rate, handoff rate, average handle time) and transcript review.
