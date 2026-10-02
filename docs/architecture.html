@@ -27,6 +27,9 @@
     <marker id="arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
     </marker>
+    <marker id="arO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
     <marker id="arG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
     </marker>
@@ -132,6 +135,35 @@
   <text x="1465" y="344" class="sub" text-anchor="middle">on the phone</text>
   <text x="1465" y="370" class="small" text-anchor="middle">consents, asks questions,</text>
   <text x="1465" y="388" class="small" text-anchor="middle">picks a recovery option</text>
+
+  <!-- ===== Razorpay webhooks ===== -->
+  <rect x="30" y="384" width="230" height="140" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <text x="48" y="414" class="h">Razorpay</text>
+  <text x="48" y="438" class="sub">webhooks:</text>
+  <text x="48" y="460" class="m">payment.failed</text>
+  <text x="48" y="480" class="m">payment.captured</text>
+  <text x="48" y="506" class="small">HMAC-signed events</text>
+  <line x1="260" y1="471" x2="296" y2="471" stroke="#c2410c" stroke-width="2" marker-end="url(#arO)"/>
+  <text x="320" y="476" class="m" style="fill:#c2410c">POST /webhooks/razorpay</text>
+
+  <!-- ===== Failure-code mapping note ===== -->
+  <rect x="30" y="548" width="230" height="150" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="48" y="576" class="b" font-weight="700">27 failure codes → action</text>
+  <text x="48" y="600" class="small">each code maps to one of:</text>
+  <text x="48" y="624" class="m">retry</text>
+  <text x="48" y="644" class="m">retry_later</text>
+  <text x="48" y="664" class="m">payment_link</text>
+  <text x="48" y="684" class="m">escalate</text>
+  <line x1="260" y1="556" x2="296" y2="545" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <!-- ===== Batch dialer ===== -->
+  <rect x="1300" y="436" width="270" height="150" rx="12" fill="#fdf4ff" stroke="#a21caf" stroke-width="2"/>
+  <text x="1318" y="466" class="h">Batch dialer</text>
+  <text x="1318" y="490" class="m">scripts/dial-all.ts</text>
+  <text x="1318" y="514" class="sub">calls only 8am–7pm IST</text>
+  <text x="1318" y="540" class="small">triggers Sarvam outbound</text>
+  <text x="1318" y="558" class="small">calls per failed customer</text>
+  <line x1="1298" y1="511" x2="1254" y2="511" stroke="#a21caf" stroke-width="2" marker-end="url(#ar)"/>
 
   <!-- ===== Guardrails ===== -->
   <rect x="380" y="610" width="870" height="185" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
