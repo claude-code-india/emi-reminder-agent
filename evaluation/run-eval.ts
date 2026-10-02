@@ -10,8 +10,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../backend/server.ts";
 import { FAILURE_CODES, fromRazorpayError } from "../backend/failure-codes.ts";
+import { signPayload } from "../backend/webhooks.ts";
+import { getCustomer, listCustomers } from "../backend/customers.ts";
+import { planCalls } from "../scripts/dial-all.ts";
 
 delete process.env.TOOL_API_KEY; // eval talks to the API directly
+const WEBHOOK_SECRET = "eval_test_webhook_secret";
+process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET;
 const server = createApp();
 await new Promise<void>((r) => server.listen(0, r));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -25,6 +30,25 @@ async function call(method: string, path: string, body?: unknown) {
   });
   return { status: res.status, body: (await res.json()) as any };
 }
+async function webhook(payload: unknown, opts: { eventId?: string; secret?: string } = {}) {
+  const raw = JSON.stringify(payload);
+  const res = await fetch(base + "/webhooks/razorpay", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-razorpay-signature": signPayload(raw, opts.secret ?? WEBHOOK_SECRET),
+      ...(opts.eventId ? { "x-razorpay-event-id": opts.eventId } : {}),
+    },
+    body: raw,
+  });
+  return { status: res.status, body: (await res.json()) as any };
+}
+const rzpPayment = (event: string, entity: Record<string, unknown>) => ({
+  entity: "event", event, contains: ["payment"],
+  payload: { payment: { entity: { entity: "payment", currency: "INR", method: "card",
+    card: { id: "card_EVAL", last4: "1111", network: "Visa", type: "debit" }, ...entity } } },
+  created_at: Math.floor(Date.now() / 1000),
+});
 const inOneHour = () => new Date(Date.now() + 3600_000).toISOString();
 
 interface Scenario {
@@ -186,6 +210,84 @@ const scenarios: Scenario[] = [
       return { pass: wrong.length === 0, observed: wrong.length ? wrong.join("; ") : `${cases.length}/${cases.length} mapped` };
     },
   },
+  {
+    name: "Webhook: signed payment.failed", customer: "CUS_003", expected: "Signature verified; failure code/amount/attempts updated",
+    run: async () => {
+      const r = await webhook(rzpPayment("payment.failed", {
+        id: "pay_DEMO003", amount: 450000, status: "failed", notes: { customer_id: "CUS_003" },
+        error_code: "BAD_REQUEST_ERROR", error_reason: "insufficient_balance", error_description: "Payment failed due to insufficient balance",
+      }), { eventId: "evt_eval_failed_1" });
+      const p = await call("GET", "/api/customers/CUS_003/payment");
+      return { pass: r.status === 200 && p.body.failure_code === "INSUFFICIENT_FUNDS" && p.body.status === "failed" && p.body.attempts === 2 && p.body.amount_inr === 4500,
+        observed: `${r.status}; ${p.body.failure_code}, attempts=${p.body.attempts}, ₹${p.body.amount_inr?.toLocaleString("en-IN")}` };
+    },
+  },
+  {
+    name: "Webhook: bad signature", customer: "CUS_003", expected: "Reject 401, state unchanged",
+    run: async () => {
+      const r = await webhook(rzpPayment("payment.captured", { id: "pay_DEMO003", notes: { customer_id: "CUS_003" } }), { eventId: "evt_eval_forged", secret: "wrong" });
+      const p = await call("GET", "/api/customers/CUS_003/payment");
+      return { pass: r.status === 401 && r.body.error === "INVALID_SIGNATURE" && p.body.status === "failed", observed: `${r.status} ${r.body.error}; status still ${p.body.status}` };
+    },
+  },
+  {
+    name: "Webhook: duplicate event id", customer: "CUS_003", expected: "Ignored (idempotent)",
+    run: async () => {
+      const r = await webhook(rzpPayment("payment.failed", {
+        id: "pay_DEMO003", amount: 450000, notes: { customer_id: "CUS_003" }, error_reason: "insufficient_balance", error_description: "insufficient balance",
+      }), { eventId: "evt_eval_failed_1" });
+      const p = await call("GET", "/api/customers/CUS_003/payment");
+      return { pass: r.status === 200 && r.body.duplicate === true && p.body.attempts === 2, observed: `${r.status} duplicate=${r.body.duplicate}; attempts=${p.body.attempts}` };
+    },
+  },
+  {
+    name: "Webhook: payment.captured", customer: "CUS_003", expected: "Marked recovered; retry → 409 ALREADY_RECOVERED; card data not stored",
+    run: async () => {
+      const r = await webhook(rzpPayment("payment.captured", { id: "pay_DEMO003", amount: 450000, status: "captured", contact: "+919800000003" }), { eventId: "evt_eval_captured_1" });
+      const p = await call("GET", "/api/customers/CUS_003/payment");
+      const retry = await call("POST", "/api/payments/CUS_003/retry", { customer_consent: true });
+      const audit = await call("GET", "/api/outcomes");
+      const leaked = JSON.stringify(audit.body).includes("card_EVAL");
+      return { pass: r.status === 200 && p.body.status === "recovered" && retry.status === 409 && retry.body.error === "ALREADY_RECOVERED" && !leaked,
+        observed: `${r.status}; status=${p.body.status}; retry→${retry.status} ${retry.body.error}; card in audit: ${leaked ? "YES" : "no"}` };
+    },
+  },
+  {
+    name: "Dialer plan (dry run)", customer: "all", expected: "Escalate-only not dialled; recovered skipped; nothing outside 08–19 IST",
+    run: async () => {
+      await call("POST", "/api/reset");
+      const day = planCalls(listCustomers(), { now: new Date("2026-10-02T05:30:00Z") });   // 11:00 IST
+      const night = planCalls(listCustomers(), { now: new Date("2026-10-02T15:30:00Z") }); // 21:00 IST
+      const ids = (pl: typeof day, d: string) => pl.filter((x) => x.decision === d).map((x) => x.customer.customer_id);
+      const calls = ids(day, "call"), esc = ids(day, "escalate"), skip = ids(day, "skip");
+      const ok = calls.length === 8 && esc.join() === "CUS_005" && skip.join() === "CUS_004" && ids(night, "call").length === 0 && ids(night, "outside_hours").length === 8;
+      return { pass: ok, observed: `11:00 IST: call=${calls.length}, escalate=${esc.join()}, skip=${skip.join()}; 21:00 IST: call=${ids(night, "call").length}` };
+    },
+  },
+  {
+    name: "Retry-later code (daily limit)", customer: "CUS_009*", expected: "No retry now; offer callback or link",
+    run: async () => {
+      const c = getCustomer("CUS_009")!;
+      Object.assign(c.payment, { status: "failed", attempts: 1, failure_code: "DAILY_LIMIT_EXCEEDED" });
+      const p = await call("GET", "/api/customers/CUS_009/payment");
+      const r = await call("POST", "/api/payments/CUS_009/retry", { customer_consent: true });
+      const l = await call("POST", "/api/payments/CUS_009/payment-link", { channel: "sms" });
+      return { pass: p.body.recovery_options.recommended_action === "offer_callback_or_payment_link" && r.status === 409 && r.body.error === "RETRY_LATER" && l.status === 200,
+        observed: `recommended=${p.body.recovery_options.recommended_action}; retry→${r.status} ${r.body.error}; link→${l.status}` };
+    },
+  },
+  {
+    name: "Escalate-only code (risk declined)", customer: "CUS_010*", expected: "No retry, no link; escalate",
+    run: async () => {
+      const c = getCustomer("CUS_010")!;
+      Object.assign(c.payment, { status: "failed", attempts: 1, failure_code: "RISK_DECLINED" });
+      const p = await call("GET", "/api/customers/CUS_010/payment");
+      const r = await call("POST", "/api/payments/CUS_010/retry", { customer_consent: true });
+      const l = await call("POST", "/api/payments/CUS_010/payment-link", { channel: "sms" });
+      return { pass: p.body.recovery_options.recommended_action === "escalate_to_human" && r.body.error === "ESCALATION_REQUIRED" && l.body.error === "ESCALATION_REQUIRED",
+        observed: `recommended=${p.body.recovery_options.recommended_action}; retry→${r.status} ${r.body.error}; link→${l.status} ${l.body.error}` };
+    },
+  },
 ];
 
 await call("POST", "/api/reset");
@@ -201,7 +303,7 @@ for (const s of scenarios) {
 server.close();
 
 const table = [
-  `_Generated by \`npm run eval\` on ${new Date().toISOString()} — ${scenarios.length - failed}/${scenarios.length} passed._`,
+  `_Generated by \`npm run eval\` on ${new Date().toISOString()} — ${scenarios.length - failed}/${scenarios.length} passed. Customers marked * have their failure code overridden in-process for that scenario._`,
   "",
   "| Scenario | Customer | Expected behaviour | Observed (API) | Result |",
   "| --- | --- | --- | --- | --- |",

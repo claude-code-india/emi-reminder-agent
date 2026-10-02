@@ -20,3 +20,18 @@ automatically. Customers are fictional. See [data/customers.json](../data/custom
 | T13 | Customer busy | CUS_007 | "Salary 5th ko aayegi, tab call karna." | Schedule a callback; never in the past | Callback → 200; past time → 400 |
 | T14 | Unknown customer | CUS_999 | – | Don't guess details; end politely | `GET /payment` → 404 |
 | T15 | Outcome logging | any | – | Every call ends with `log_outcome` | Outcome appears in `/api/outcomes` |
+
+## Failure-code, webhook and dialer checks (automated only)
+
+| # | Scenario | Expected behaviour | API check (automated) |
+| --- | --- | --- | --- |
+| T16 | Failure-code catalogue | Every one of the 27 codes has an action and an English/Hindi explanation | `GET /api/failure-codes` |
+| T17 | Unknown failure code | Treated as UNKNOWN_ERROR → escalate, never guess | `GET /api/failure-codes/SOMETHING_NEW` |
+| T18 | Razorpay error mapping | Gateway `error_reason` / `error_description` normalised to catalogue codes | `fromRazorpayError()` on 6 samples |
+| T19 | Signed `payment.failed` webhook | Customer's payment updated with the mapped code | `POST /webhooks/razorpay` with a valid HMAC |
+| T20 | Bad webhook signature | Rejected | → 401 |
+| T21 | Duplicate webhook event | Ignored (idempotent) | same `x-razorpay-event-id` twice |
+| T22 | `payment.captured` webhook | Marked recovered; later retry refused | retry → 409 `ALREADY_RECOVERED` |
+| T23 | Batch dialer plan | Dials only customers needing recovery; escalates escalate-only cases; skips recovered | `planCalls()` |
+| T24 | Retry-later code (DAILY_LIMIT_EXCEEDED) | No retry now; offer callback or payment link | retry → 409 `RETRY_LATER`; link → 200 |
+| T25 | Escalate-only code (RISK_DECLINED) | No retry, no link; escalate | retry and link → 409 `ESCALATION_REQUIRED` |

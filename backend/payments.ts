@@ -34,7 +34,8 @@ let audit: AuditEvent[] = [];
 export const resetAudit = () => { audit = []; };
 export const getAudit = () => audit;
 
-function record(customer_id: string, action: string, detail: Record<string, unknown>): AuditEvent {
+/** Append an event to the in-memory audit log. Never pass OTP/PIN/card data in `detail`. */
+export function record(customer_id: string, action: string, detail: Record<string, unknown>): AuditEvent {
   const ev = { id: `evt_${randomUUID().replace(/-/g, "").slice(0, 8)}`, at: new Date().toISOString(), customer_id, action, detail };
   audit.push(ev);
   return ev;

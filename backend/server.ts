@@ -1,5 +1,4 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { getCustomer, listCustomers, publicCustomer, resetCustomers, type Customer } from "./customers.ts";
 import {
@@ -7,14 +6,10 @@ import {
   scheduleCallback, sendPaymentLink,
 } from "./payments.ts";
 import { FAILURE_CODES, failureInfo } from "./failure-codes.ts";
+import { loadEnv } from "./env.ts";
+import { handleRazorpayWebhook, resetWebhooks } from "./webhooks.ts";
 
-// Minimal .env loader so `npm run dev` works without extra dependencies.
-if (existsSync(".env")) {
-  for (const line of readFileSync(".env", "utf8").split("\n")) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-  }
-}
+loadEnv();
 
 // Keys that must never reach this API. The agent is told never to collect them;
 // this is the server-side backstop.
@@ -37,12 +32,17 @@ function findSensitiveKey(value: unknown): string | null {
   return null;
 }
 
-async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readRaw(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
-  if (!chunks.length) return {};
+  return Buffer.concat(chunks);
+}
+
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const raw = await readRaw(req);
+  if (!raw.length) return {};
   try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const parsed = JSON.parse(raw.toString("utf8"));
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     throw new ApiError(400, "INVALID_JSON", "Request body must be JSON");
@@ -74,7 +74,7 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["GET", /^\/api\/failure-codes$/, () => FAILURE_CODES],
   ["GET", /^\/api\/failure-codes\/([^/]+)$/, ([code]) => failureInfo(decodeURIComponent(code).toUpperCase())],
   ["GET", /^\/api\/outcomes$/, () => getAudit()],
-  ["POST", /^\/api\/reset$/, () => { resetCustomers(); resetAudit(); return { ok: true }; }],
+  ["POST", /^\/api\/reset$/, () => { resetCustomers(); resetAudit(); resetWebhooks(); return { ok: true }; }],
 ];
 
 export function createApp(): Server {
@@ -84,6 +84,15 @@ export function createApp(): Server {
       const apiKey = process.env.TOOL_API_KEY;
       if (apiKey && url.pathname.startsWith("/api/") && req.headers["x-api-key"] !== apiKey) {
         throw new ApiError(401, "UNAUTHORIZED", "Missing or invalid x-api-key");
+      }
+      // Razorpay webhook: outside /api (no x-api-key), needs the RAW body for HMAC
+      // verification, and skips the sensitive-key filter because genuine Razorpay
+      // payloads carry objects like `card` (we only ever copy whitelisted fields).
+      if (url.pathname === "/webhooks/razorpay") {
+        if (req.method !== "POST") throw new ApiError(405, "METHOD_NOT_ALLOWED", "Use POST");
+        const result = handleRazorpayWebhook(await readRaw(req), req.headers);
+        console.log(`POST ${url.pathname} -> 200`);
+        return send(res, 200, result);
       }
       for (const [method, pattern, handler] of routes) {
         const m = url.pathname.match(pattern);

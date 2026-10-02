@@ -261,8 +261,8 @@ Scenario checks run with `npm run eval` (or `npm test`). "API-verified" means th
 | Non-retryable failure | Send a payment link | ✅ API-verified (`NOT_RETRYABLE` → link) |
 | Max attempts reached | No retry | ✅ API-verified (`MAX_ATTEMPTS_REACHED`) |
 | Customer is busy | Schedule a callback | ✅ API-verified |
-| Retry-later failure (e.g. DAILY_LIMIT_EXCEEDED) | No retry now; offer callback or payment link | Enforced by backend (`409 RETRY_LATER`); no demo customer uses this code, see [evaluation/results.md](evaluation/results.md) for test status |
-| Escalate-only failure (e.g. RISK_DECLINED) | No retry, no link; escalate | Enforced by backend (`409 ESCALATION_REQUIRED` on retry and link); no demo customer uses this code, see [evaluation/results.md](evaluation/results.md) for test status |
+| Retry-later failure (e.g. DAILY_LIMIT_EXCEEDED) | No retry now; offer callback or payment link | ✅ API-verified (`409 RETRY_LATER`) |
+| Escalate-only failure (e.g. RISK_DECLINED) | No retry, no link; escalate | ✅ API-verified (`409 ESCALATION_REQUIRED` on retry and link) |
 
 Conversational behaviour (tone, language, explanation quality, respecting a refusal) can only be judged on live calls. Those results are in `evaluation/results.md`.
 

@@ -68,7 +68,7 @@ Outcome: Payment recovery initiated
 
 ## Evaluation summary
 
-10 scenarios: payment failed, agrees to retry, refuses, asks for a human, asks for OTP, already recovered, dispute, non-retryable failure, max attempts, busy. The 8 backend-enforced behaviours (retry, already recovered, dispute, OTP rejection, non-retryable → link, max attempts, escalation, callback) are verified automatically by `npm test`. Conversational behaviour from live Sarvam test calls is recorded in `evaluation/results.md`.
+25 automated checks via `npm test`, all passing: payment failed, agrees to retry, retry without consent, refuses, asks for a human, OTP / UPI PIN / card number rejected and never logged, already recovered, dispute, non-retryable → link, max attempts, double retry, busy → callback, unknown customer, outcome logging, 27-code failure catalogue, unknown-code → escalate, Razorpay error mapping, retry-later and escalate-only codes, signed / bad-signature / duplicate Razorpay webhooks, payment.captured → no re-debit, and dialer planning. Conversational behaviour from live Sarvam test calls is recorded separately in `evaluation/results.md`.
 
 ## What I'd do next
 

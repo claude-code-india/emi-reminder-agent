@@ -10,7 +10,8 @@
     "demo": "tsx demo/run-demo.ts",
     "eval": "tsx evaluation/run-eval.ts",
     "test": "tsx evaluation/run-eval.ts --check",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dial": "tsx scripts/dial-all.ts"
   },
   "engines": {
     "node": ">=18"

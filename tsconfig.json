@@ -10,5 +10,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["backend", "demo", "evaluation"]
+  "include": ["backend", "demo", "evaluation", "scripts"]
 }
