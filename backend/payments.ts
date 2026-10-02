@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Customer } from "./customers.ts";
+import { failureInfo } from "./failure-codes.ts";
 
-export const RETRYABLE_CODES = new Set(["INSUFFICIENT_FUNDS", "BANK_TECHNICAL_ERROR", "AFA_NOT_COMPLETED"]);
 export const MAX_ATTEMPTS = 3;
 
 export const OUTCOMES = [
@@ -47,19 +47,24 @@ export function retryBlockReason(c: Customer): { code: string; message: string }
   if (p.status === "retry_initiated") return { code: "RETRY_IN_PROGRESS", message: "A retry is already in progress." };
   if (c.disputed) return { code: "DISPUTED_ESCALATE", message: "Customer has an open dispute. Escalate to a human." };
   if (p.attempts >= MAX_ATTEMPTS) return { code: "MAX_ATTEMPTS_REACHED", message: `Maximum of ${MAX_ATTEMPTS} attempts reached. Offer a payment link.` };
-  if (!RETRYABLE_CODES.has(p.failure_code)) return { code: "NOT_RETRYABLE", message: `Failure ${p.failure_code} cannot be fixed by retrying the mandate. Offer a payment link.` };
+  const info = failureInfo(p.failure_code);
+  if (info.action === "escalate") return { code: "ESCALATION_REQUIRED", message: `Failure ${info.code} must be reviewed by a human. Do not retry or send a link.` };
+  if (info.action === "retry_later") return { code: "RETRY_LATER", message: `Failure ${info.code} won't clear yet. Schedule a callback or offer a payment link.` };
+  if (info.action !== "retry") return { code: "NOT_RETRYABLE", message: `Failure ${info.code} cannot be fixed by retrying the mandate. Offer a payment link.` };
   return null;
 }
 
 export function paymentStatus(c: Customer) {
   const block = retryBlockReason(c);
-  const canLink = c.payment.status !== "recovered" && !c.disputed;
+  const info = failureInfo(c.payment.failure_code);
+  const canLink = c.payment.status !== "recovered" && !c.disputed && info.action !== "escalate";
   let recommended_action: string;
   if (c.payment.status === "recovered") recommended_action = "thank_customer_no_action";
-  else if (c.disputed) recommended_action = "escalate_to_human";
+  else if (c.payment.status === "retry_initiated") recommended_action = "confirm_retry_in_progress";
+  else if (c.disputed || info.action === "escalate") recommended_action = "escalate_to_human";
   else if (!block) recommended_action = "offer_retry";
-  else if (canLink) recommended_action = "offer_payment_link";
-  else recommended_action = "escalate_to_human";
+  else if (info.action === "retry_later") recommended_action = "offer_callback_or_payment_link";
+  else recommended_action = "offer_payment_link";
   return {
     customer_id: c.customer_id,
     name: c.name,
@@ -69,6 +74,12 @@ export function paymentStatus(c: Customer) {
     mandate_status: c.mandate_status,
     ...c.payment,
     disputed: c.disputed,
+    failure_info: {
+      action: info.action,
+      explain_en: info.explain_en,
+      explain_hi: info.explain_hi,
+      customer_fix: info.customer_fix,
+    },
     recovery_options: {
       can_retry: !block,
       retry_block_reason: block?.code ?? null,
@@ -103,6 +114,9 @@ export function sendPaymentLink(c: Customer, body: { channel?: unknown }) {
   if (channel !== "sms" && channel !== "whatsapp") throw new ApiError(400, "INVALID_CHANNEL", "channel must be sms or whatsapp");
   if (c.payment.status === "recovered") throw new ApiError(409, "ALREADY_RECOVERED", "Payment is already recovered.");
   if (c.disputed) throw new ApiError(409, "DISPUTED_ESCALATE", "Customer has an open dispute. Escalate to a human.");
+  if (failureInfo(c.payment.failure_code).action === "escalate") {
+    throw new ApiError(409, "ESCALATION_REQUIRED", "This failure must be reviewed by a human. Do not send a link.");
+  }
   const link_id = `plink_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
   const expires_at = new Date(Date.now() + 48 * 3600_000).toISOString();
   const short_url = `https://rzp.io/demo/${link_id.slice(6)}`;

@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../backend/server.ts";
+import { FAILURE_CODES, fromRazorpayError } from "../backend/failure-codes.ts";
 
 delete process.env.TOOL_API_KEY; // eval talks to the API directly
 const server = createApp();
@@ -152,6 +153,37 @@ const scenarios: Scenario[] = [
       const a = await call("GET", "/api/outcomes");
       const ok = a.body.some((e: any) => e.customer_id === "CUS_001" && e.action === "log_outcome");
       return { pass: ok, observed: `${a.body.length} audit events` };
+    },
+  },
+  {
+    name: "Failure-code catalogue served", customer: "–", expected: "Every code has an action + explanation",
+    run: async () => {
+      const r = await call("GET", "/api/failure-codes");
+      const ok = r.status === 200 && r.body.length === FAILURE_CODES.length &&
+        r.body.every((f: any) => f.action && f.explain_en && f.explain_hi && f.applies_to.length);
+      return { pass: ok, observed: `${r.body.length} codes` };
+    },
+  },
+  {
+    name: "Unknown failure code", customer: "–", expected: "Treated as UNKNOWN_ERROR → escalate, never guess",
+    run: async () => {
+      const r = await call("GET", "/api/failure-codes/SOMETHING_NEW");
+      return { pass: r.body.code === "UNKNOWN_ERROR" && r.body.action === "escalate", observed: `${r.body.code} → ${r.body.action}` };
+    },
+  },
+  {
+    name: "Razorpay error → code mapping", customer: "–", expected: "Gateway errors normalised correctly",
+    run: async () => {
+      const cases: Array<[Record<string, string>, string]> = [
+        [{ reason: "insufficient_balance", description: "Payment failed due to insufficient balance" }, "INSUFFICIENT_FUNDS"],
+        [{ reason: "mandate_revoked", description: "The mandate was revoked by the customer" }, "MANDATE_REVOKED"],
+        [{ reason: "card_expired", description: "Your card has expired" }, "CARD_EXPIRED"],
+        [{ reason: "payment_risk_check_failed", description: "Payment blocked due to suspicious activity" }, "RISK_DECLINED"],
+        [{ reason: "bank_technical_error", description: "Bank is facing technical issues" }, "BANK_TECHNICAL_ERROR"],
+        [{ reason: "", description: "something odd" }, "UNKNOWN_ERROR"],
+      ];
+      const wrong = cases.filter(([e, want]) => fromRazorpayError(e) !== want).map(([e, want]) => `${e.reason}→${fromRazorpayError(e)}≠${want}`);
+      return { pass: wrong.length === 0, observed: wrong.length ? wrong.join("; ") : `${cases.length}/${cases.length} mapped` };
     },
   },
 ];

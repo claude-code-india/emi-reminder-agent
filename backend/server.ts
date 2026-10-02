@@ -6,6 +6,7 @@ import {
   ApiError, escalate, getAudit, logOutcome, paymentStatus, resetAudit, retryPayment,
   scheduleCallback, sendPaymentLink,
 } from "./payments.ts";
+import { FAILURE_CODES, failureInfo } from "./failure-codes.ts";
 
 // Minimal .env loader so `npm run dev` works without extra dependencies.
 if (existsSync(".env")) {
@@ -70,6 +71,8 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["POST", /^\/api\/callbacks$/, (_, b) => scheduleCallback(customerOr404(String(b.customer_id ?? "")), b)],
   ["POST", /^\/api\/escalations$/, (_, b) => escalate(customerOr404(String(b.customer_id ?? "")), b)],
   ["POST", /^\/api\/outcomes$/, (_, b) => logOutcome(customerOr404(String(b.customer_id ?? "")), b)],
+  ["GET", /^\/api\/failure-codes$/, () => FAILURE_CODES],
+  ["GET", /^\/api\/failure-codes\/([^/]+)$/, ([code]) => failureInfo(decodeURIComponent(code).toUpperCase())],
   ["GET", /^\/api\/outcomes$/, () => getAudit()],
   ["POST", /^\/api\/reset$/, () => { resetCustomers(); resetAudit(); return { ok: true }; }],
 ];
